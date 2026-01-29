@@ -36,7 +36,7 @@ wikipedia_dataset = load_dataset("sentence-transformers/wiki1m-for-simcse", spli
 
 # train_samples is a list of InputExample objects where we pass the same sentence twice to texts, i.e. texts=[sent, sent]
 train_samples = []
-for example in wikipedia_dataset["train"]:
+for example in wikipedia_dataset:
     line = example["text"].strip()
     if len(line) >= 10:
         train_samples.append(InputExample(texts=[line, line]))
