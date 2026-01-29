@@ -42,16 +42,16 @@ test = sts_dataset["test"]
 
 
 dev_evaluator = EmbeddingSimilarityEvaluator(
-    [row["sentence1"] for row in dev],
-    [row["sentence2"] for row in dev],
-    [row["score"] for row in dev],
+    dev["sentence1"],
+    dev["sentence2"],
+    dev["score"],
     name="sts-dev",
 )
 
 test_evaluator = EmbeddingSimilarityEvaluator(
-    [row["sentence1"] for row in test],
-    [row["sentence2"] for row in test],
-    [row["score"] for row in test],
+    test["sentence1"],
+    test["sentence2"],
+    test["score"],
     name="sts-test",
 )
 
