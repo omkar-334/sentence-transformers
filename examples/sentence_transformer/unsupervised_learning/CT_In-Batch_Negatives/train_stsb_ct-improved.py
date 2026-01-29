@@ -27,8 +27,8 @@ model_save_path = "output/training_stsb_ct-improved-{}-{}".format(
 
 ################# Train sentences #################
 # We use 1 Million sentences from Wikipedia to train our model
-url = "https://huggingface.co/datasets/princeton-nlp/datasets-for-simcse/resolve/main/wiki1m_for_simcse.txt"
-wikipedia_dataset = load_dataset("text", data_files=url)
+wikipedia_dataset = load_dataset("sentence-transformers/wiki1m-for-simcse", split="train")
+
 
 # train_sentences are simply your list of sentences
 train_sentences = [
