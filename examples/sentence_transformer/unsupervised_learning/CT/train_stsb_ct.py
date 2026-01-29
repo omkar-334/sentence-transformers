@@ -29,9 +29,7 @@ model_save_path = "output/train_stsb_ct-{}-{}".format(model_name, datetime.now()
 wikipedia_dataset = load_dataset("sentence-transformers/wiki1m-for-simcse", split="train")
 
 # train_sentences are simply your list of sentences
-train_sentences = [
-    example["text"].strip() for example in wikipedia_dataset if len(example["text"].strip()) >= 10
-]
+train_sentences = [example["text"].strip() for example in wikipedia_dataset if len(example["text"].strip()) >= 10]
 
 ################# Download and load STSb #################
 sts_dataset = load_dataset("sentence-transformers/stsb")

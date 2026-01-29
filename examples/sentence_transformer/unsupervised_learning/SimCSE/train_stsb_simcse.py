@@ -1,12 +1,11 @@
 import logging
 import math
-import os
 from datetime import datetime
 
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 
-from sentence_transformers import InputExample, LoggingHandler, SentenceTransformer, losses, models, util
+from sentence_transformers import InputExample, LoggingHandler, SentenceTransformer, losses, models
 from sentence_transformers.evaluation import EmbeddingSimilarityEvaluator
 
 #### Just some code to print debug information to stdout
