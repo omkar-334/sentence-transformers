@@ -2,9 +2,8 @@ import logging
 from datetime import datetime
 
 from datasets import load_dataset
-from torch.utils.data import DataLoader
 
-from sentence_transformers import InputExample, LoggingHandler, SentenceTransformer, losses, models, util
+from sentence_transformers import LoggingHandler, SentenceTransformer, losses, models, util
 from sentence_transformers.evaluation import EmbeddingSimilarityEvaluator
 from sentence_transformers.trainer import SentenceTransformerTrainer
 from sentence_transformers.training_args import SentenceTransformerTrainingArguments
@@ -33,38 +32,30 @@ model_save_path = "output/training_stsb_ct-improved-{}-{}".format(
 # We use 1 Million sentences from Wikipedia to train our model
 wikipedia_dataset = load_dataset("sentence-transformers/wiki1m-for-simcse", split="train")
 
+train_dataset = wikipedia_dataset.map(lambda x: {"text": x["text"].strip()}, remove_columns=["text"])
 
-# train_sentences are simply your list of sentences
-train_sentences = [
-    InputExample(texts=[example["text"].strip(), example["text"].strip()]) for example in wikipedia_dataset
-]
 
-################## Download and load STSb #################
+# Download and load STSb
 sts_dataset = load_dataset("sentence-transformers/stsb")
+dev = sts_dataset["validation"]
+test = sts_dataset["test"]
 
-dev_samples = []
-test_samples = []
-
-for row in sts_dataset["validation"]:
-    dev_samples.append(InputExample(texts=[row["sentence1"], row["sentence2"]], label=row["score"]))
-
-for row in sts_dataset["test"]:
-    test_samples.append(InputExample(texts=[row["sentence1"], row["sentence2"]], label=row["score"]))
 
 dev_evaluator = EmbeddingSimilarityEvaluator(
-    [s1 for s1, _, _ in dev_samples],
-    [s2 for _, s2, _ in dev_samples],
-    [score for _, _, score in dev_samples],
+    [row["sentence1"] for row in dev],
+    [row["sentence2"] for row in dev],
+    [row["score"] for row in dev],
     name="sts-dev",
 )
+
 test_evaluator = EmbeddingSimilarityEvaluator(
-    [s1 for s1, _, _ in test_samples],
-    [s2 for _, s2, _ in test_samples],
-    [score for _, _, score in test_samples],
+    [row["sentence1"] for row in test],
+    [row["sentence2"] for row in test],
+    [row["score"] for row in test],
     name="sts-test",
 )
 
-# Initialize an SBERT model #################
+# Initialize an SBERT model
 word_embedding_model = models.Transformer(model_name, max_seq_length=max_seq_length)
 pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension())
 model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
@@ -77,10 +68,11 @@ args = SentenceTransformerTrainingArguments(
     output_dir=model_save_path,
     num_train_epochs=epochs,
     per_device_train_batch_size=batch_size,
-    warmup_steps=1000,
+    warmup_steps=0.1,
+    eval_steps=0.1,
+    logging_steps=0.01,
     learning_rate=5e-5,
     save_strategy="no",
-    logging_steps=100,
     fp16=True,
 )
 
@@ -95,6 +87,18 @@ trainer = SentenceTransformerTrainer(
 
 # Train the model
 trainer.train()
-# Load the model and evaluate on test set
-model = SentenceTransformer(model_save_path)
 test_evaluator(model)
+
+model.save_pretrained(model_save_path)
+
+# (Optional) save the model to the Hugging Face Hub!
+# It is recommended to run `huggingface-cli login` to log into your Hugging Face account first
+model_name = model_name if "/" not in model_name else model_name.split("/")[-1]
+try:
+    model.push_to_hub(f"{model_name}-simcse")
+except Exception:
+    logging.error(
+        f"Error uploading model to the Hugging Face Hub:\nTo upload it manually, you can run "
+        f"`huggingface-cli login`, followed by loading the model using `model = SentenceTransformer({model_save_path!r})` "
+        f"and saving it using `model.push_to_hub('{model_name}-simcse')`."
+    )
