@@ -16,7 +16,6 @@ logging.basicConfig(
     level=logging.INFO,
     handlers=[LoggingHandler()],
 )
-# /print debug information to stdout
 
 # Some training parameters. For the example, we use a batch_size of 128, a max sentence length (max_seq_length)
 # of 32 word pieces and as model roberta-base
@@ -25,7 +24,7 @@ batch_size = 128
 max_seq_length = 32
 num_epochs = 1
 
-# Download AskUbuntu and extract training corpus #################
+# Download AskUbuntu and extract training corpus
 askubuntu_folder = "data/askubuntu"
 output_path = "output/askubuntu-simcse-{}-{}-{}".format(
     model_name, batch_size, datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -60,13 +59,11 @@ def read_eval_dataset(filepath):
             relevant_id = relevant_id.split(" ")
             candidate_ids = candidate_ids.split(" ")
             negative_ids = set(candidate_ids) - set(relevant_id)
-            dataset.append(
-                {
-                    "query": corpus[query_id],
-                    "positive": [corpus[pid] for pid in relevant_id],
-                    "negative": [corpus[pid] for pid in negative_ids],
-                }
-            )
+            dataset.append({
+                "query": corpus[query_id],
+                "positive": [corpus[pid] for pid in relevant_id],
+                "negative": [corpus[pid] for pid in negative_ids],
+            })
             dev_test_ids.add(query_id)
             dev_test_ids.update(candidate_ids)
     return dataset
@@ -86,7 +83,7 @@ for id, sentence in corpus.items():
 logging.info(f"{len(train_sentences)} train sentences")
 train_dataset = Dataset.from_list(train_sentences)
 
-# Initialize an SBERT model #################
+# Initialize an SBERT model
 
 
 word_embedding_model = models.Transformer(model_name, max_seq_length=max_seq_length)
@@ -120,12 +117,12 @@ args = SentenceTransformerTrainingArguments(
     output_dir=output_path,
     num_train_epochs=num_epochs,
     per_device_train_batch_size=batch_size,
-    warmup_steps=warmup_steps,
+    warmup_steps=0.1,
+    eval_steps=0.1,
+    logging_steps=0.01,
     learning_rate=5e-5,
-    eval_steps=100,
     save_strategy="no",
     fp16=True,  # If your GPU does not have FP16 cores, set fp16=False
-    logging_steps=50,
 )
 
 # Train the model
@@ -140,9 +137,20 @@ trainer = SentenceTransformerTrainer(
 logging.info("Start training")
 trainer.train()
 
-latest_output_path = output_path + "-latest"
-model.save(latest_output_path)
-
-# Run test evaluation on the latest model. This is equivalent to not having a dev dataset
-model = SentenceTransformer(latest_output_path)
+# Run test evaluation
 test_evaluator(model)
+
+latest_output_path = output_path + "-latest"
+model.save_pretrained(latest_output_path)
+
+# (Optional) save the model to the Hugging Face Hub!
+# It is recommended to run `huggingface-cli login` to log into your Hugging Face account first
+model_name = model_name if "/" not in model_name else model_name.split("/")[-1]
+try:
+    model.push_to_hub(f"{model_name}-simcse")
+except Exception:
+    logging.error(
+        f"Error uploading model to the Hugging Face Hub:\nTo upload it manually, you can run "
+        f"`huggingface-cli login`, followed by loading the model using `model = SentenceTransformer({latest_output_path!r})` "
+        f"and saving it using `model.push_to_hub('{model_name}-simcse')`."
+    )
