@@ -13,6 +13,7 @@ import logging
 import math
 import random
 import sys
+import traceback
 from datetime import datetime
 
 import tqdm
@@ -125,3 +126,20 @@ if len(train_sentences) >= 2:
     logging.info(f"  Sentence 1: {sentence1[:60]}...")
     logging.info(f"  Sentence 2: {sentence2[:60]}...")
     logging.info(f"  Cosine similarity: {similarity:.4f}")
+
+
+# Save the trained & evaluated model locally
+final_output_dir = f"{model_output_path}/final"
+model.save_pretrained(final_output_dir)
+
+# (Optional) save the model to the Hugging Face Hub!
+# It is recommended to run `huggingface-cli login` to log into your Hugging Face account first
+model_name = model_name if "/" not in model_name else model_name.split("/")[-1]
+try:
+    model.push_to_hub(f"{model_name}-ct-from-file")
+except Exception:
+    logging.error(
+        f"Error uploading model to the Hugging Face Hub:\n{traceback.format_exc()}To upload it manually, you can run "
+        f"`huggingface-cli login`, followed by loading the model using `model = SentenceTransformer({final_output_dir!r})` "
+        f"and saving it using `model.push_to_hub('{model_name}-ct-from-file')`."
+    )
