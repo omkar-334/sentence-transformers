@@ -2,9 +2,16 @@ import logging
 from datetime import datetime
 
 from datasets import load_dataset
-from torch.utils.data import DataLoader
 
-from sentence_transformers import LoggingHandler, SentenceTransformer, evaluation, losses, models
+from sentence_transformers import (
+    LoggingHandler,
+    SentenceTransformer,
+    SentenceTransformerTrainer,
+    SentenceTransformerTrainingArguments,
+    models,
+)
+from sentence_transformers.evaluation import RerankingEvaluator
+from sentence_transformers.losses import MultipleNegativesRankingLoss
 
 # Just some code to print debug information to stdout
 logging.basicConfig(
@@ -56,11 +63,11 @@ pooling_model = models.Pooling(
 model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
 
 # As Loss function, we use MultipleNegativesRankingLoss
-train_loss = losses.MultipleNegativesRankingLoss(model)
+train_loss = MultipleNegativesRankingLoss(model)
 
 # Create a dev evaluator
-dev_evaluator = evaluation.RerankingEvaluator(eval_dataset, name="AskUbuntu dev")
-test_evaluator = evaluation.RerankingEvaluator(test_dataset, name="AskUbuntu test")
+dev_evaluator = RerankingEvaluator(eval_dataset, name="AskUbuntu dev")
+test_evaluator = RerankingEvaluator(test_dataset, name="AskUbuntu test")
 
 logging.info("Dev performance before training")
 dev_evaluator(model)
