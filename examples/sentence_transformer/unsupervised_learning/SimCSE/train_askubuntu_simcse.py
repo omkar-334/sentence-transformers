@@ -15,15 +15,12 @@ from sentence_transformers.losses import MultipleNegativesRankingLoss
 
 # Just some code to print debug information to stdout
 logging.basicConfig(
-    format="%(asctime)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    level=logging.INFO,
-    handlers=[LoggingHandler()],
+    format="%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO, handlers=[LoggingHandler()]
 )
 
 # Some training parameters. For the example, we use a batch_size of 128, a max sentence length (max_seq_length)
 # of 32 word pieces and as model roberta-base
-model_name = "roberta-base"
+model_name = "FacebookAI/roberta-base"
 batch_size = 128
 max_seq_length = 32
 num_epochs = 1
@@ -48,9 +45,10 @@ train_dataset = load_dataset("sentence-transformers/askubuntu-questions", split=
 )
 logging.info(train_dataset)
 
+# Because SimCSE uses pairs of positive pairs, with in-batch negatives, we need to convert the dataset accordingly
+train_dataset = train_dataset.add_column("identical_text", train_dataset["text"])
+
 # Initialize an SBERT model
-
-
 word_embedding_model = models.Transformer(model_name, max_seq_length=max_seq_length)
 
 # Apply mean pooling
@@ -69,19 +67,17 @@ train_loss = MultipleNegativesRankingLoss(model)
 dev_evaluator = RerankingEvaluator(eval_dataset, name="AskUbuntu dev")
 test_evaluator = RerankingEvaluator(test_dataset, name="AskUbuntu test")
 
-logging.info("Dev performance before training")
+logging.info("Performance before training")
 dev_evaluator(model)
-
-# Warmup: 10% of steps
-steps_per_epoch = len(train_dataset) // batch_size
-warmup_steps = int(num_epochs * steps_per_epoch * 0.1)
+test_evaluator(model)
 
 # Prepare training arguments
 args = SentenceTransformerTrainingArguments(
     output_dir=output_path,
     num_train_epochs=num_epochs,
     per_device_train_batch_size=batch_size,
-    warmup_steps=0.1,
+    warmup_ratio=0.1,
+    eval_strategy="steps",
     eval_steps=0.1,
     logging_steps=0.01,
     learning_rate=5e-5,
@@ -101,7 +97,8 @@ trainer = SentenceTransformerTrainer(
 logging.info("Start training")
 trainer.train()
 
-# Run test evaluation
+# Run evaluation
+dev_evaluator(model)
 test_evaluator(model)
 
 latest_output_path = output_path + "-latest"
@@ -111,10 +108,10 @@ model.save_pretrained(latest_output_path)
 # It is recommended to run `huggingface-cli login` to log into your Hugging Face account first
 model_name = model_name if "/" not in model_name else model_name.split("/")[-1]
 try:
-    model.push_to_hub(f"{model_name}-simcse")
+    model.push_to_hub(f"{model_name}-askubuntu-simcse")
 except Exception:
     logging.error(
         f"Error uploading model to the Hugging Face Hub:\nTo upload it manually, you can run "
         f"`huggingface-cli login`, followed by loading the model using `model = SentenceTransformer({latest_output_path!r})` "
-        f"and saving it using `model.push_to_hub('{model_name}-simcse')`."
+        f"and saving it using `model.push_to_hub('{model_name}-askubuntu-simcse')`."
     )
