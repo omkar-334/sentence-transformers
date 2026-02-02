@@ -100,5 +100,5 @@ except Exception:
     logging.error(
         f"Error uploading model to the Hugging Face Hub:\nTo upload it manually, you can run "
         f"`huggingface-cli login`, followed by loading the model using `model = SentenceTransformer({model_save_path!r})` "
-        f"and saving it using `model.push_to_hub('{model_name}-simcse')`."
+        f"and saving it using `model.push_to_hub('{model_name}-stsb-ct')`."
     )
