@@ -10,7 +10,6 @@ python train_ct_from_file.py path/to/sentences.txt
 
 import gzip
 import logging
-import math
 import random
 import sys
 import traceback
@@ -19,7 +18,7 @@ from datetime import datetime
 import tqdm
 from datasets import Dataset
 
-from sentence_transformers import LoggingHandler, SentenceTransformer, losses, models, util
+from sentence_transformers import LoggingHandler, SentenceTransformer, losses, models
 from sentence_transformers.trainer import SentenceTransformerTrainer
 from sentence_transformers.training_args import SentenceTransformerTrainingArguments
 
@@ -80,28 +79,21 @@ def to_ct_pairs(sample, pos_neg_ratio=8):
 
 
 train_dataset = train_dataset.map(to_ct_pairs, fn_kwargs={"pos_neg_ratio": pos_neg_ratio})
-logging.info(f"Generated {len(train_dataset)} training pairs")
+logging.info(train_dataset)
 
 # As loss, we use ContrastiveTensionLoss
 train_loss = losses.ContrastiveTensionLoss(model)
-
-# 10% of train data for warm-up
-num_train_samples = len(train_dataset)
-steps_per_epoch = num_train_samples // batch_size
-total_steps = steps_per_epoch * num_epochs
-warmup_steps = math.ceil(total_steps * 0.1)
-logging.info(f"Warmup-steps: {warmup_steps}")
 
 # Prepare the training arguments
 args = SentenceTransformerTrainingArguments(
     output_dir=model_output_path,
     num_train_epochs=num_epochs,
     per_device_train_batch_size=batch_size,
-    warmup_steps=warmup_steps,
+    warmup_ratio=0.1,
     learning_rate=5e-5,
     save_strategy="steps",
-    save_steps=500,
-    logging_steps=100,
+    save_steps=0.5,
+    logging_steps=0.1,
     fp16=False,  # Set to True, if your GPU supports FP16 cores
     optim="adamw_torch",
 )
@@ -122,7 +114,7 @@ if len(train_sentences) >= 2:
     sentence2 = train_sentences[1]
     embedding1 = model.encode(sentence1, convert_to_tensor=True)
     embedding2 = model.encode(sentence2, convert_to_tensor=True)
-    similarity = util.cos_sim(embedding1, embedding2).item()
+    similarity = model.similarity(embedding1, embedding2).item()
     logging.info(f"  Sentence 1: {sentence1[:60]}...")
     logging.info(f"  Sentence 2: {sentence2[:60]}...")
     logging.info(f"  Cosine similarity: {similarity:.4f}")
