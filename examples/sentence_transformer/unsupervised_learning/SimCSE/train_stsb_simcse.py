@@ -3,10 +3,7 @@ from datetime import datetime
 
 from datasets import load_dataset
 
-from sentence_transformers import (
-    LoggingHandler,
-    SentenceTransformer,
-)
+from sentence_transformers import LoggingHandler, SentenceTransformer
 from sentence_transformers.evaluation import EmbeddingSimilarityEvaluator
 from sentence_transformers.losses import MultipleNegativesRankingLoss
 from sentence_transformers.models import Pooling, Transformer
@@ -39,6 +36,9 @@ model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
 train_dataset = load_dataset("sentence-transformers/wiki1m-for-simcse", split="train")
 
 
+# SimCSE (or InfoNCE) require positive pairs (or larger), so if we only have single sentences,
+# we can simply duplicate the sentences to create a weak dataset of positive pairs. The loss
+# will take negative samples from the other samples in the batch.
 def simcse_map(example):
     text = example["text"].strip()
     return {
