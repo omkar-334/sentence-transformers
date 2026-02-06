@@ -1,18 +1,16 @@
-import gzip
 import json
 import logging
 import os
-import pickle
 import random
 import sys
-import tarfile
 from datetime import datetime
 from shutil import copyfile
 
-import tqdm
+from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
-from sentence_transformers import InputExample, LoggingHandler, SentenceTransformer, losses, util
+from sentence_transformers import InputExample, LoggingHandler, SentenceTransformer, losses
 from sentence_transformers.models import Pooling, Transformer
 
 # Just some code to print debug information to stdout
@@ -62,111 +60,70 @@ with open(train_script_path, "a") as fOut:
 # Now we read the MS Marco dataset
 data_folder = "msmarco-data"
 
-# Read the corpus files, that contain all the passages. Store them in the corpus dict
-corpus = {}  # dict in the format: passage_id -> passage. Stores all existent passages
-collection_filepath = os.path.join(data_folder, "collection.tsv")
-if not os.path.exists(collection_filepath):
-    tar_filepath = os.path.join(data_folder, "collection.tar.gz")
-    if not os.path.exists(tar_filepath):
-        logging.info("Download collection.tar.gz")
-        util.http_get("https://msmarco.z22.web.core.windows.net/msmarcoranking/collection.tar.gz", tar_filepath)
+# Read the corpus files, that contain all the passages.
+collection_train_hf = load_dataset("sentence-transformers/msmarco-corpus", "passage", split="train")
 
-    with tarfile.open(tar_filepath, "r:gz") as tar:
-        tar.extractall(path=data_folder)
-
-logging.info("Read corpus: collection.tsv")
-with open(collection_filepath, encoding="utf8") as fIn:
-    for line in fIn:
-        pid, passage = line.strip().split("\t")
-        pid = int(pid)
-        corpus[pid] = passage
+corpus = dict(zip(collection_train_hf["pid"], collection_train_hf["text"]))
 
 
-# Read the train queries, store in queries dict
-queries = {}  # dict in the format: query_id -> query. Stores all training queries
-queries_filepath = os.path.join(data_folder, "queries.train.tsv")
-if not os.path.exists(queries_filepath):
-    tar_filepath = os.path.join(data_folder, "queries.tar.gz")
-    if not os.path.exists(tar_filepath):
-        logging.info("Download queries.tar.gz")
-        util.http_get("https://msmarco.z22.web.core.windows.net/msmarcoranking/queries.tar.gz", tar_filepath)
+# Read the train queries.
+queries_train_hf = load_dataset("omkar334/msmarcoranking-queries", split="train")
 
-    with tarfile.open(tar_filepath, "r:gz") as tar:
-        tar.extractall(path=data_folder)
+queries = dict(zip(queries_train_hf["query_id"], queries_train_hf["query"]))
 
+# Load a dict (qid, pid) -> ce_score that maps query-ids (qid) and paragraph-ids (pid) to the CrossEncoder score computed by the cross-encoder/ms-marco-MiniLM-L6-v2 model
+ds = load_dataset("sentence-transformers/msmarco-scores-ms-marco-MiniLM-L6-v2", "list", split="train")
 
-with open(queries_filepath, encoding="utf8") as fIn:
-    for line in fIn:
-        qid, query = line.strip().split("\t")
-        qid = int(qid)
-        queries[qid] = query
-
-
-# Load a dict (qid, pid) -> ce_score that maps query-ids (qid) and paragraph-ids (pid)
-# to the CrossEncoder score computed by the cross-encoder/ms-marco-MiniLM-L6-v2 model
-ce_scores_file = os.path.join(data_folder, "cross-encoder-ms-marco-MiniLM-L6-v2-scores.pkl.gz")
-if not os.path.exists(ce_scores_file):
-    logging.info("Download cross-encoder scores file")
-    util.http_get(
-        "https://huggingface.co/datasets/sentence-transformers/msmarco-hard-negatives/resolve/main/cross-encoder-ms-marco-MiniLM-L-6-v2-scores.pkl.gz",
-        ce_scores_file,
-    )
-
+ce_scores = {qid: dict(zip(cids, scores)) for qid, cids, scores in zip(ds["query_id"], ds["corpus_id"], ds["score"])}
 logging.info("Load CrossEncoder scores dict")
-with gzip.open(ce_scores_file, "rb") as fIn:
-    ce_scores = pickle.load(fIn)
 
 # As training data we use hard-negatives that have been mined using various systems
-hard_negatives_filepath = os.path.join(data_folder, "msmarco-hard-negatives.jsonl.gz")
-if not os.path.exists(hard_negatives_filepath):
-    logging.info("Download cross-encoder scores file")
-    util.http_get(
-        "https://huggingface.co/datasets/sentence-transformers/msmarco-hard-negatives/resolve/main/msmarco-hard-negatives.jsonl.gz",
-        hard_negatives_filepath,
-    )
-
+hard_negatives_hf = load_dataset(
+    "sentence-transformers/msmarco-hard-negatives",
+    split="train",
+    streaming=True,  # ← key
+)
 
 logging.info("Read hard negatives train file")
 train_queries = {}
 negs_to_use = None
-with gzip.open(hard_negatives_filepath, "rt") as fIn:
-    for line in tqdm.tqdm(fIn):
-        if max_passages > 0 and len(train_queries) >= max_passages:
-            break
-        data = json.loads(line)
+for line in tqdm(hard_negatives_hf):
+    if max_passages > 0 and len(train_queries) >= max_passages:
+        break
+    data = json.loads(line)
 
-        # Get the positive passage ids
-        pos_pids = data["pos"]
+    # Get the positive passage ids
+    pos_pids = data["pos"]
 
-        # Get the hard negatives
-        neg_pids = set()
-        if negs_to_use is None:
-            if negs_to_use is not None:  # Use specific system for negatives
-                negs_to_use = negs_to_use.split(",")
-            else:  # Use all systems
-                negs_to_use = list(data["neg"].keys())
-            logging.info("Using negatives from the following systems: {}".format(", ".join(negs_to_use)))
+    # Get the hard negatives
+    neg_pids = set()
+    if negs_to_use is None:
+        if negs_to_use is not None:  # Use specific system for negatives
+            negs_to_use = negs_to_use.split(",")
+        else:  # Use all systems
+            negs_to_use = list(data["neg"].keys())
+        logging.info("Using negatives from the following systems: {}".format(", ".join(negs_to_use)))
 
-        for system_name in negs_to_use:
-            if system_name not in data["neg"]:
-                continue
+    for system_name in negs_to_use:
+        if system_name not in data["neg"]:
+            continue
 
-            system_negs = data["neg"][system_name]
-            negs_added = 0
-            for pid in system_negs:
-                if pid not in neg_pids:
-                    neg_pids.add(pid)
-                    negs_added += 1
-                    if negs_added >= num_negs_per_system:
-                        break
+        system_negs = data["neg"][system_name]
+        negs_added = 0
+        for pid in system_negs:
+            if pid not in neg_pids:
+                neg_pids.add(pid)
+                negs_added += 1
+                if negs_added >= num_negs_per_system:
+                    break
 
-        if use_all_queries or (len(pos_pids) > 0 and len(neg_pids) > 0):
-            train_queries[data["qid"]] = {
-                "qid": data["qid"],
-                "query": queries[data["qid"]],
-                "pos": pos_pids,
-                "neg": neg_pids,
-            }
+    if use_all_queries or (len(pos_pids) > 0 and len(neg_pids) > 0):
+        train_queries[data["qid"]] = {
+            "qid": data["qid"],
+            "query": queries[data["qid"]],
+            "pos": pos_pids,
+            "neg": neg_pids,
+        }
 
 logging.info(f"Train queries: {len(train_queries)}")
 
