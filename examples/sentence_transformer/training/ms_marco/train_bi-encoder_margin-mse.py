@@ -1,12 +1,12 @@
+import gzip
 import json
 import logging
 import os
 import random
-import sys
 from datetime import datetime
-from shutil import copyfile
 
 from datasets import load_dataset
+from huggingface_hub import hf_hub_download
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
@@ -20,13 +20,12 @@ from sentence_transformers.training_args import BatchSamplers, SentenceTransform
 logging.basicConfig(
     format="%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO, handlers=[LoggingHandler()]
 )
-# print debug information to stdout
 
-train_batch_size = 64  # Increasing the train batch size improves the model performance, but requires more GPU memory
+train_batch_size = 64
 max_seq_length = 300  # Max length for passages. Increasing it, requires more GPU memory
 model_name = "microsoft/mpnet-base"
 max_passages = 0
-num_epochs = 1  # Number of epochs we want to train
+num_epochs = 1
 pooling_mode = "mean"
 negs_to_use = None
 warmup_steps = 1000
@@ -54,14 +53,6 @@ model_save_path = f"output/train_bi-encoder-margin_mse-{model_name.replace('/', 
 # Write self to path
 os.makedirs(model_save_path, exist_ok=True)
 
-train_script_path = os.path.join(model_save_path, "train_script.py")
-copyfile(__file__, train_script_path)
-with open(train_script_path, "a") as fOut:
-    fOut.write("\n\n# Script was called via:\n#python " + " ".join(sys.argv))
-
-
-# Now we read the MS Marco dataset
-data_folder = "msmarco-data"
 
 # Read the corpus files, that contain all the passages.
 corpus_hf = load_dataset("sentence-transformers/msmarco-corpus", "passage", split="train")
@@ -70,9 +61,9 @@ corpus = dict(zip(corpus_hf["pid"], corpus_hf["text"]))
 
 
 # Read the train queries.
-queries_hf = load_dataset("sentence-transformers/msmarco-corpus", "query", split="train")
+queries_hf = load_dataset("omkar334/msmarcoranking-queries", split="train")
 
-queries = dict(zip(queries_hf["query_id"], queries_hf["query"]))
+queries = dict(zip(queries_hf["qid"], queries_hf["text"]))
 
 # Load a dict (qid, pid) -> ce_score that maps query-ids (qid) and paragraph-ids (pid) to the CrossEncoder score computed by the cross-encoder/ms-marco-MiniLM-L6-v2 model
 ce_scores_hf = load_dataset("sentence-transformers/msmarco-scores-ms-marco-MiniLM-L6-v2", "list", split="train")
@@ -88,52 +79,54 @@ ce_scores = {
 logging.info("Load CrossEncoder scores dict")
 
 # As training data we use hard-negatives that have been mined using various systems
-hard_negatives_hf = load_dataset(
-    "sentence-transformers/msmarco-hard-negatives",
-    split="train",
-    streaming=True,  # ← key
+hard_negatives_filepath = hf_hub_download(
+    repo_id="sentence-transformers/msmarco-hard-negatives",
+    filename="msmarco-hard-negatives.jsonl.gz",
+    repo_type="dataset",
 )
+
 
 logging.info("Read hard negatives train file")
 train_queries = {}
 negs_to_use = None
-for line in tqdm(hard_negatives_hf):
-    if max_passages > 0 and len(train_queries) >= max_passages:
-        break
-    data = json.loads(line)
+with gzip.open(hard_negatives_filepath, "rt") as fIn:
+    for line in tqdm(fIn):
+        if max_passages > 0 and len(train_queries) >= max_passages:
+            break
+        data = json.loads(line)
 
-    # Get the positive passage ids
-    pos_pids = data["pos"]
+        # Get the positive passage ids
+        pos_pids = data["pos"]
 
-    # Get the hard negatives
-    neg_pids = set()
-    if negs_to_use is None:
-        if negs_to_use is not None:  # Use specific system for negatives
-            negs_to_use = negs_to_use.split(",")
-        else:  # Use all systems
-            negs_to_use = list(data["neg"].keys())
-        logging.info("Using negatives from the following systems: {}".format(", ".join(negs_to_use)))
+        # Get the hard negatives
+        neg_pids = set()
+        if negs_to_use is None:
+            if negs_to_use is not None:  # Use specific system for negatives
+                negs_to_use = negs_to_use.split(",")
+            else:  # Use all systems
+                negs_to_use = list(data["neg"].keys())
+            logging.info("Using negatives from the following systems: {}".format(", ".join(negs_to_use)))
 
-    for system_name in negs_to_use:
-        if system_name not in data["neg"]:
-            continue
+        for system_name in negs_to_use:
+            if system_name not in data["neg"]:
+                continue
 
-        system_negs = data["neg"][system_name]
-        negs_added = 0
-        for pid in system_negs:
-            if pid not in neg_pids:
-                neg_pids.add(pid)
-                negs_added += 1
-                if negs_added >= num_negs_per_system:
-                    break
+            system_negs = data["neg"][system_name]
+            negs_added = 0
+            for pid in system_negs:
+                if pid not in neg_pids:
+                    neg_pids.add(pid)
+                    negs_added += 1
+                    if negs_added >= num_negs_per_system:
+                        break
 
-    if use_all_queries or (len(pos_pids) > 0 and len(neg_pids) > 0):
-        train_queries[data["qid"]] = {
-            "qid": data["qid"],
-            "query": queries[data["qid"]],
-            "pos": pos_pids,
-            "neg": neg_pids,
-        }
+        if use_all_queries or (len(pos_pids) > 0 and len(neg_pids) > 0):
+            train_queries[data["qid"]] = {
+                "qid": data["qid"],
+                "query": queries[data["qid"]],
+                "pos": pos_pids,
+                "neg": neg_pids,
+            }
 
 logging.info(f"Train queries: {len(train_queries)}")
 
